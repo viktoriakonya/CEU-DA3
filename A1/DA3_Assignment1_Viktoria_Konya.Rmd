@@ -1,0 +1,14 @@
+---
+header-includes: |
+  \usepackage{titling}
+  \usepackage{float}
+  \setlength{\droptitle}{-6em} 
+title: "Assignment 1"
+author:  "Viktória Kónya"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+geometry: margin=1.8cm
+fontsize: 9pt
+output: 
+  pdf_document:
+    extra_dependencies: ["flafter"]
+---
