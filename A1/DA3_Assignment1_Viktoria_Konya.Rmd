@@ -1,9 +1,8 @@
 ---
 header-includes: |
   \usepackage{titling}
-  \usepackage{float}
   \setlength{\droptitle}{-6em} 
-title: "Assignment 1"
+title: "DA3 - Assignment 1"
 author:  "Viktória Kónya"
 date: "`r format(Sys.time(), '%d %B %Y')`"
 geometry: margin=1.8cm
@@ -30,6 +29,7 @@ library(tidyverse)
 library(modelsummary)
 library(kableExtra)
 library(gridExtra) # multiple-plots
+library(grid)
 # library(estimatr)
 library(fixest)
 library(caret) 
@@ -104,18 +104,62 @@ bin_scatters_multi <- function( data,  x_var , y_var, x_lab, y_lab){
  )
 }
 
+
+# D. Interactions
+interactions <- function(df, outcome_var, factor_var, dummy_var, outcome_lab, factor_lab, dummy_lab){
+
+  # Process your data frame and make a new dataframe which contains the stats
+  outcome_var <- as.name(outcome_var)
+  factor_var <- as.name(factor_var)
+  dummy_var <- as.name(dummy_var)
+  
+  stats <- df %>%
+    group_by(!!factor_var, !!dummy_var) %>%
+    dplyr::summarize(Mean = mean(!!outcome_var, na.rm=TRUE),
+                     se = sd(!!outcome_var)/sqrt(n()))
+  
+  stats[,2] <- lapply(stats[,2], factor)
+  
+  ggplot(stats, aes_string(colnames(stats)[1], colnames(stats)[3], fill = colnames(stats)[2]))+
+    geom_bar(stat='identity', position = position_dodge(width=0.9), alpha=0.8)+
+    geom_errorbar(aes(ymin=Mean-(1.96*se),ymax=Mean+(1.96*se)),
+                  position=position_dodge(width = 0.9), width = 0.25)+
+    scale_color_manual(name=dummy_lab, values=c("#2ca25f","#3182bd")) +
+    scale_fill_manual(name=dummy_lab, values=c("#2ca25f","#3182bd"), labels=c("Male", "Female")) +
+    labs(x= factor_lab, y = outcome_lab, fill = dummy_lab)+
+    theme_bw()+
+    theme(
+        legend.position = "bottom",
+        axis.title.y = element_text(face = "bold"),
+        axis.title.x = element_text(face = "bold"),
+        legend.title = element_blank())
+    
+}
+
+# E. Blank cell
+blank <- grid.rect(gp=gpar(col="white"))
+
+
 ```
 
 
-\vspace{-18mm}
+\vspace{-10mm}
 ### Introduction
 \vspace{-3mm}
 
-In this report I examine the ...
+The goal of this report is to predict the hourly wages of Financial managers focusing on professionals with undergraduate or graduate degrees (BA or higher).
+
+
+### Sample selection
+\vspace{-3mm}
+
+The source of my analysis is the CPS dataset that I filtered based on occupation code and the education level. Managers between the age of 21 and 64 and with the minimum of 20 working hours per week were considered only in order to focus on the active labor force with a degree. Observations with earnings below one dollar per hour were excluded as such low wage is unlikely among Financial managers. The sample consists of 881 observations with 416 women and 446 men.
+
 
 ```{r data_cleaning_sample, echo = F, include = F}
 
-# Data cleaning & sample selection ( -> same sample as in DA2 Assignment 1)
+# Data cleaning & sample selection 
+# Business question: predict hourly wages among Financial managers with university degree ( -> same sample as in DA2 Assignment 1)
 
 # Filter for occupation - 1020: Financial managers - 1401 obs.
 df <- df_orig %>% filter( occ2012 %in% c(0120) )
@@ -261,6 +305,7 @@ hist_age <- histograms(df$age, 'Age', bin = 3)
 # EDA
 
 # C. Scatter plots
+# Moved to Appendix A3
 
 # Age
 scatter_w_age <- scatter(data = df, x_var = age, y_var = w, x_lab = "Age", y_lab = "Hourly wages") 
@@ -304,6 +349,164 @@ bin_scatters_multi(data = df, x_var = state, y_var = lnw, x_lab = "State", y_lab
 # Pairwise summary table
 # ggpairs(df %>% select(-c(state, hhid, educ, uhours, earnwke, agesq, agecu, agequ)))
 
+```
+
+```{r eda_interactions, echo = F, include = F}
+
+# EDA
+
+# E. Interactions
+# Moved to Appendix A4
+
+# Education and gender
+eda_interactions <- interactions(df = df, outcome_var ="w", factor_var = "educ", dummy_var = "female", outcome_lab = "Mean Hourly wage", factor_lab = "Education level", dummy_lab = "Gender") 
+
+# Age and gender
+scatter_w_age_male <- scatter(data = df %>% filter(female == 0), x_var = age, y_var = w, x_lab = "Age", y_lab = "Hourly wages") 
+scatter_w_age_female <- scatter(data = df %>% filter(female == 1), x_var = age, y_var = w, x_lab = "Age", y_lab = "Hourly wages") 
+
+```
+
+### Predictors of hourly wages
+
+
+### Regression analysis and model comparison
+\vspace{-3mm}
+
+
+```{r regressions, echo = F, include = F}
+
+# Model estimation 
+
+# Model 1: Simple linear regression
+model1 <- as.formula(w ~ age + agesq ) 
+
+# Model 2:
+model2 <- as.formula(w ~ age + agesq + female + educ_MA + educ_Profess + educ_PhD ) 
+
+# Model 3:
+model3 <- as.formula(w ~ age + agesq + female + educ_MA + educ_Profess + educ_PhD + union_membership + class_cat + has_child)
+
+# Model 4:
+model4 <- as.formula(w ~ age + agesq + female + educ_MA + educ_Profess + educ_PhD + female * age + female * agesq + female * educ_MA + union_membership + class_cat + has_child)
+
+
+# A. Running models
+reg1 <- feols(model1, data=df, vcov = 'hetero')
+reg2 <- feols(model2, data=df, vcov = 'hetero')
+reg3 <- feols(model3, data=df, vcov = 'hetero')
+reg4 <- feols(model4, data=df, vcov = 'hetero')
+
+
+# B. Evaluation of the models: a) RMSE in full sample and c) BIC in full sample
+ 
+# Create variable name list
+varname_report <- c("(Intercept)" = "Intercept",
+                    "w" = "Hourly wage",
+                    "age" = "Age",
+                    "agesq" = "Age sqare",
+                    "female" = "Female",
+                    "educ_MA" = "Education - MA",
+                    "educ_Profess" = "Education - Professional", 
+                    "educ_PhD" = "Education - PhD",
+                    "union_membership" = "Union member",
+                    "class_cat" = "Private sector",
+                    "has_child" = "Has child")
+
+# Register number of coeffs estimated                   
+fitstat_register("k", function(x){length( x$coefficients ) - 1}, "No. Variables")
+
+# Save regression output as latex table
+etable( reg1 , reg2 , reg3 , reg4 ,
+        title = 'Regression models for predicting horly wages',
+        #headers = c("(1)","(2)","(3)","(4)"),
+        dict = varname_report,
+        # drop = vars_omit ,
+        # group = groupConf ,
+        se.below = TRUE,
+        se.row = FALSE,
+        # coefstat = 'se',
+        fitstat = c('aic','bic','rmse','r2','ar2', 'n','k'),
+        tex = TRUE, 
+        file = 'reg.tex',
+        replace = TRUE)
+
+
+```
+
+
+```{r cv, echo = F, include = F}
+
+# Cross-validation
+
+# C. Evaluation of the models: b) Cross-validated RMSE
+k <- 4
+
+# Model 1 
+set.seed(20220122)
+cv1 <- train(model1, df, method = "lm", trControl = trainControl(method = "cv", number = k))
+summary(cv1)
+
+# Model 2
+set.seed(20220122)
+cv2 <- train(model2, df, method = "lm", trControl = trainControl(method = "cv", number = k))
+
+# Model 3
+set.seed(20220122)
+cv3 <- train(model3, df, method = "lm", trControl = trainControl(method = "cv", number = k))
+
+# Model 4
+set.seed(13505)
+cv4 <- train(model4, df, method = "lm", trControl = trainControl(method = "cv", number = k))
+
+cv <- c("cv1", "cv2", "cv3", "cv4")
+rmse_cv <- c()
+
+for(i in 1:length(cv)){
+  rmse_cv[i] <- sqrt((get(cv[i])$resample[[1]][1]^2 +
+                       get(cv[i])$resample[[1]][2]^2 +
+                       get(cv[i])$resample[[1]][3]^2 +
+                       get(cv[i])$resample[[1]][4]^2)/4)
+}
+
+
+# summarize results
+cv_mat <- data.frame(rbind(cv1$resample[4], "Average"),
+           rbind(cv1$resample[1], rmse_cv[1]),
+           rbind(cv2$resample[1], rmse_cv[2]),
+           rbind(cv3$resample[1], rmse_cv[3]),
+           rbind(cv4$resample[1], rmse_cv[4])
+           )
+
+colnames(cv_mat)<-c("Resample","Model1", "Model2", "Model3", "Model4")
+cv_mat #CV RMSE: Model3
+
+```
+
+
+### Performance and model complexity
+\vspace{-3mm}
+
+
+```{r model_complexity, echo = F, fig.align="center", fig.height=2.8, fig.width=4}
+
+m_comp <- c()
+models <- c("reg1", "reg2", "reg3", "reg4")
+
+for( i in 1 : length(cv) ){
+  m_comp[ i ] <- length( get( models[i] )$coefficient  - 1 ) 
+}
+
+m_comp <- tibble( model = models , 
+                  complexity = m_comp,
+                  RMSE = rmse_cv )
+
+ggplot( m_comp , aes( x = complexity , y = RMSE ) ) +
+  geom_point(color='red',size=2) +
+  geom_line(color='blue',size=0.5)+
+  labs(x='Number of explanatory variables',y='Averaged RMSE on test samples',
+       title='Prediction performance and model compexity') +
+  theme_bw()
 
 ```
 
@@ -311,9 +514,8 @@ bin_scatters_multi(data = df, x_var = state, y_var = lnw, x_lab = "State", y_lab
 
 
 
-
-
-
+### Summary
+\vspace{-3mm}
 
 
 
@@ -359,7 +561,7 @@ grid.arrange( grobs = list(
 \newpage
 ### A3. Relationship with outcome variable
 
-```{r A3_eda_2_var_analysis1, echo = F, fig.align='center', fig.height=14, fig.width=10}
+```{r A3_eda_2_var_analysis1, echo = F, fig.align='center', fig.height=13, fig.width=10}
 
 # Relationship with outcome
 grid.arrange( grobs = list(
@@ -372,7 +574,7 @@ grid.arrange( grobs = list(
               bin_scatter_educ_w, 
               bin_scatter_educ_logw),
              ncol=2,
-             top = "Fig2.: Histograms",
+             top = "Fig2.: Relationship with outcome",
              bottom = "Note: .")
 
 ```
@@ -387,7 +589,7 @@ grid.arrange( grobs = list(
               bin_scatter_child_w, 
               bin_scatter_child_logw),
              ncol=2,
-             top = "Fig2.: Histograms",
+             top = "Fig2.: Relationship with outcome",
              bottom = "Note: .")
 
 ```
@@ -396,5 +598,31 @@ grid.arrange( grobs = list(
 \newpage
 ### A4. Interactions
 
+
+```{r A4_eda_interactions, echo = F, fig.align='center', fig.height=8, fig.width=10}
+
+# Interactions
+grid.arrange( grobs = list(
+              eda_interactions,
+              blank,
+              scatter_w_age_male + ylim(c(0,120)) + labs(title = "Male"), 
+              scatter_w_age_female  + ylim(c(0,120)) + labs(title = "Female") ),
+             ncol=2,
+             top = "Fig3.: Interactions",
+             bottom = "Note: .")
+
+
+
+```
+
+
 \newpage
 ### A5. Regression
+
+\include{reg.tex}
+
+
+
+
+
+
