@@ -12,3 +12,180 @@ output:
   pdf_document:
     extra_dependencies: ["flafter"]
 ---
+
+```{r setup, include=FALSE}
+
+# Chunk setup
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+
+```
+
+```{r import_libraries, echo = F, include = F}
+
+# Clear environment
+rm(list=ls())
+
+# Import libraries
+library(tidyverse)
+library(modelsummary)
+library(kableExtra)
+# library(estimatr)
+library(fixest)
+library(caret) 
+library(GGally) # pairwise 
+
+```
+
+```{r import_dataset, echo = F, include = F}
+
+# Import dataset
+df_orig <- read_csv("https://osf.io/4ay9x/download") 
+
+```
+
+
+```{r custom_function, echo = F, include = F}
+
+# Create custom functions for visualization
+
+# A. Histograms
+histograms <- function( x_var , x_lab, bin ){
+  n = nrow(df)
+  
+  ggplot( df , aes(x = x_var)) +
+    geom_histogram( binwidth = bin, fill="#238b45", color = 'gray50', na.rm = T) +
+    stat_function(fun = function(x) dnorm(x, mean = mean(x_var, na.rm = T), sd = sd(x_var, na.rm = T)) * n * bin, color = "darkred", size = 1, na.rm = T) +
+    labs(y = 'Count',x = x_lab ) +
+    theme_bw() +
+      theme(
+        plot.title = element_text(size = 12L,
+        face = "bold", hjust = 0.5),
+        axis.title.y = element_text(face = "bold"),
+        axis.title.x = element_text(face = "bold"),
+        legend.position = "none"
+     )
+}
+
+# B. Scatterplot
+scatter <- function( data, x_var , y_var, x_lab, y_lab, chart_title){
+  
+  ggplot( data , aes(x = {{ x_var }}, y = {{ y_var }})) +
+    geom_point(color="#2ca25f",size=0.5,alpha=0.6, na.rm = T) +
+    geom_smooth(method="loess" , formula = y ~ x , na.rm = T)+
+    labs(x = x_lab, y = y_lab) +
+    #ggtitle(chart_title) +
+    theme_bw() +
+    theme(
+    plot.title = element_text(size = 12L,
+    face = "bold", hjust = 0.5),
+    axis.title.y = element_text(face = "bold"),
+    axis.title.x = element_text(face = "bold"),
+    legend.position = "none"
+    )
+}
+
+# C. Bin scatters
+bin_scatters_multi <- function( data,  x_var , y_var, x_lab, y_lab){
+
+  data %>%   
+  ggplot() +
+  geom_jitter(aes(x = as.factor({{ x_var }}), y = {{ y_var }}), width = 0.25, color = "#2ca25f", alpha = 0.6, size = 0.5) +
+  geom_crossbar(data = df %>% group_by({{ x_var }}) %>% dplyr::summarize( avg = mean({{ y_var }}, na.rm = T)), aes(x = as.factor({{ x_var }}), y = avg, ymin = avg, ymax = avg), size=0.5,col="black", width = 0.4) +
+  #scale_x_discrete(labels = c(lab_x1, lab_x2, lab_x3, lab_x4, lab_x5, "NA")) +
+  labs(x = x_lab, y = y_lab) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(size = 12L,
+    face = "bold", hjust = 0.5),
+    axis.title.y = element_text(face = "bold"),
+    axis.title.x = element_text(face = "bold"),
+    legend.position = "none"
+ )
+}
+
+```
+
+
+\vspace{-18mm}
+### Introduction
+\vspace{-3mm}
+
+In this report I examine the ...
+
+```{r data_cleaning, echo = F, include = F}
+
+# Data cleaning ( -> same sample as in DA2 Assignment 1)
+
+# Filter for occupation - 1020: Financial managers - 1401 obs.
+df <- df_orig %>% filter( occ2012 %in% c(0120) )
+
+# Data preparation
+df <- df %>% 
+  
+  # Filter : has hourly earning larger than one dollar, min. BA degree, active age
+  filter( uhours>=20 & earnwke>uhours & grade92>=43 & age>=21 & age<=64)  %>%
+  
+  # Create gender dummy and character version for summary table
+  mutate( female = as.numeric( sex==2 ) ) %>% 
+  mutate( female_char = case_when(
+            female == 1 ~ "Female",
+            female == 0 ~ "Male" )) %>%
+  
+  # Create hourly wage
+  mutate( w = earnwke/uhours ) %>%
+    
+  # Create log hourly wage
+  mutate( lnw = log( w ) ) %>%
+    
+  # Create age polinomials
+  mutate(agesq=age^2,
+         agecu=age^3,
+         agequ = age^4) %>%
+    
+  # Create education groups for summary table
+  mutate(educ = factor(case_when(
+          grade92 == 43 ~ "BA Degree",
+          grade92 == 44 ~ "MA Degree", 
+          grade92 == 45 ~ "Professional",
+          grade92 == 46 ~ "PhD"),
+          levels = c("BA Degree", 
+                     "MA Degree", 
+                     "Professional",
+                     "PhD"))) %>% 
+    
+  # Create education dummies
+  mutate(
+          educ_BA = ifelse(educ == "BA Degree", 1, 0),
+          educ_MA = ifelse(educ == "MA Degree", 1, 0),  
+          educ_Profess = ifelse(educ == "Professional", 1, 0),  
+          educ_PhD = ifelse(educ == "PhD", 1, 0))  %>%
+
+  # Create class flag
+  mutate(class_cat = case_when(
+            class %in% c('Government - Federal' , 'Government - State', 'Government - Local') ~ 0,
+            class %in% c('Private, For Profit' , 'Private, Nonprofit') ~ 1)) %>%
+         
+  # Union membership
+  mutate(union_membership = case_when(
+            unionmme %in% c('Yes') ~ 1,
+            unionmme %in% c('No') ~ 0))  %>%
+
+  # Own child
+  mutate(has_child = case_when(
+            ownchild == 0 ~ 0,
+            ownchild > 0 ~ 1))  %>%
+  
+  # Keep only the useful fields
+  select(hhid, earnwke, uhours, w, lnw, age, agesq, agecu, agequ, female, class_cat, educ, educ_BA, educ_MA, educ_Profess, educ_PhD, union_membership, has_child, state, race, marital, ethnic)
+
+  
+# Check other variables 
+unique(df$state)
+unique(df$marital)
+unique(df$race)
+unique(df$ethnic)
+
+# Summary
+summary(df)
+
+```
