@@ -29,6 +29,7 @@ rm(list=ls())
 library(tidyverse)
 library(modelsummary)
 library(kableExtra)
+library(gridExtra) # multiple-plots
 # library(estimatr)
 library(fixest)
 library(caret) 
@@ -112,9 +113,9 @@ bin_scatters_multi <- function( data,  x_var , y_var, x_lab, y_lab){
 
 In this report I examine the ...
 
-```{r data_cleaning, echo = F, include = F}
+```{r data_cleaning_sample, echo = F, include = F}
 
-# Data cleaning ( -> same sample as in DA2 Assignment 1)
+# Data cleaning & sample selection ( -> same sample as in DA2 Assignment 1)
 
 # Filter for occupation - 1020: Financial managers - 1401 obs.
 df <- df_orig %>% filter( occ2012 %in% c(0120) )
@@ -189,3 +190,211 @@ unique(df$ethnic)
 summary(df)
 
 ```
+
+
+```{r eda_summary_table, echo = F, include = F}
+
+# EDA
+
+# A. Summary statistics
+# Note: Moved to Appendix A1
+
+P95 <- function(x){quantile(x,0.95,na.rm=T)}
+P05 <- function(x){quantile(x,0.05,na.rm=T)}
+Range <- function(x){max(x, na.rm = TRUE) - min(x, na.rm = TRUE)}
+Missing <- function(x){sum(is.na(x))}
+
+eda_summary_table <- datasummary(  
+              ( `Earnings` = earnwke ) +
+              ( `Hours worked` = uhours ) +
+              ( `Hourly wage` = w ) +
+              ( `Log of Hourly wage` = lnw ) + 
+              ( `Age` = age ) +  
+              ( `Female` = female ) +
+              ( `Job type` = class_cat ) +
+              ( `BA Degree` = educ_BA ) + 
+              ( `MA Degree` = educ_MA ) +                 
+              ( `Professional` = educ_Profess ) +                 
+              ( `PhD` = educ_PhD ) +
+              ( `Union member` = union_membership ) +
+              ( `Child`= has_child ) ~
+    (N + Missing + Mean + SD + Min + Max + Range + P05 + Median  + P95),
+    data = df,
+    title = 'Descriptive statistics' ) %>% 
+    kableExtra::kable_styling(latex_options = "hold_position", font_size = 9)
+
+# Summary
+summary(df)
+
+
+```
+
+
+
+```{r eda_1_var_analysis, echo = F, include = F}
+
+# EDA 
+
+# B. Distributions
+# Moved to Appendix A2
+
+# Earnings
+hist_earnings <- histograms(df$earnwke, 'Earings', bin = 100 ) 
+
+# Hours worked
+hist_hours_worked <- histograms(df$uhours, 'Hours worked', bin = 1)
+
+# Hourly wage
+hist_hourly_wage <- histograms(df$w, 'Hourly wage', bin = 3)
+
+# Ln hourly wage
+hist_log_hourly_wage <- histograms(df$lnw, 'Log of Hourly wage', bin = 0.1)
+
+# Age
+hist_age <- histograms(df$age, 'Age', bin = 3)
+
+```
+
+
+```{r eda_pairwise_analysis, echo = F, include = F}
+
+# EDA
+
+# C. Scatter plots
+
+# Age
+scatter_w_age <- scatter(data = df, x_var = age, y_var = w, x_lab = "Age", y_lab = "Hourly wages") 
+scatter_logw_age <- scatter(data = df, x_var = age, y_var = lnw, x_lab = "Age", y_lab = "Log of Hourly wages") 
+
+# D. Bin scatters
+
+# Gender
+bin_scatter_felame_w <- bin_scatters_multi(data = df, x_var = female, y_var = w, x_lab = "Gender", y_lab = "Hourly wages") + scale_x_discrete(labels = c("Male", "Female")) 
+
+bin_scatter_felame_logw <- bin_scatters_multi(data = df, x_var = female, y_var = lnw, x_lab = "Gender", y_lab = "Log of Hourly wages") + scale_x_discrete(labels = c("Male", "Female")) 
+
+
+# Job type
+bin_scatter_jobtype_w <- bin_scatters_multi(data = df, x_var = class_cat, y_var = w, x_lab = "Job type", y_lab = "Hourly wages") + scale_x_discrete(labels = c("Government", "Private")) 
+
+bin_scatter_jobtype_logw <- bin_scatters_multi(data = df, x_var = class_cat, y_var = lnw, x_lab = "Job type", y_lab = "Log of Hourly wages") + scale_x_discrete(labels = c("Government", "Private")) 
+
+
+# Education
+bin_scatter_educ_w <- bin_scatters_multi(data = df, x_var = educ, y_var = w, x_lab = "Education level", y_lab = "Hourly wages") + scale_x_discrete(labels = c("BA Degree", "MA Degree", "Professional", "PhD")) 
+
+bin_scatter_educ_logw <- bin_scatters_multi(data = df, x_var = educ, y_var = lnw, x_lab = "Education level", y_lab = "Log of Hourly wages") + scale_x_discrete(labels = c("BA Degree", "MA Degree", "Professional", "PhD")) 
+
+
+# Union membership
+bin_scatter_union_w <- bin_scatters_multi(data = df, x_var = union_membership, y_var = w, x_lab = "Member of union", y_lab = "Hourly wages") + scale_x_discrete(labels = c("No", "Yes")) 
+
+bin_scatter_union_logw <- bin_scatters_multi(data = df, x_var = union_membership, y_var = lnw, x_lab = "Member of union", y_lab = "Log of Hourly wages") + scale_x_discrete(labels = c("No", "Yes")) 
+
+
+# Child
+bin_scatter_child_w <- bin_scatters_multi(data = df, x_var = has_child, y_var = w, x_lab = "Has own child", y_lab = "Hourly wages") + scale_x_discrete(labels = c("No", "Yes")) 
+
+bin_scatter_child_logw <- bin_scatters_multi(data = df, x_var = has_child, y_var = lnw, x_lab = "Has own child", y_lab = "Log of Hourly wages") + scale_x_discrete(labels = c("No", "Yes")) 
+
+# State
+bin_scatters_multi(data = df, x_var = state, y_var = lnw, x_lab = "State", y_lab = "Log of Hourly wages") 
+
+
+# Pairwise summary table
+# ggpairs(df %>% select(-c(state, hhid, educ, uhours, earnwke, agesq, agecu, agequ)))
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+\newpage
+### Appendix
+### A1. Descriptive statistics
+
+```{r A1_eda_summary_table, echo = F}
+
+# Descriptive statistics
+eda_summary_table
+
+```
+
+
+\newpage
+### A2. One variable analysis
+
+```{r A2_eda_1_var_analysis, echo = F, fig.align='center', fig.height=8, fig.width=10}
+
+# Histograms
+grid.arrange( grobs = list(
+              hist_earnings,
+              hist_hours_worked,
+              hist_hourly_wage, 
+              hist_log_hourly_wage,
+              hist_age),
+             ncol=2,
+             top = "Fig1.: Histograms",
+             bottom = "Note: .")
+
+```
+
+
+\newpage
+### A3. Relationship with outcome variable
+
+```{r A3_eda_2_var_analysis1, echo = F, fig.align='center', fig.height=14, fig.width=10}
+
+# Relationship with outcome
+grid.arrange( grobs = list(
+              scatter_w_age,
+              scatter_logw_age,
+              bin_scatter_felame_w, 
+              bin_scatter_felame_logw,
+              bin_scatter_jobtype_w, 
+              bin_scatter_jobtype_logw,
+              bin_scatter_educ_w, 
+              bin_scatter_educ_logw),
+             ncol=2,
+             top = "Fig2.: Histograms",
+             bottom = "Note: .")
+
+```
+
+\newpage
+```{r A3_eda_2_var_analysis2, echo = F, fig.align='center', fig.height=7, fig.width=10}
+
+# Relationship with outcome
+grid.arrange( grobs = list(
+              bin_scatter_union_w,
+              bin_scatter_union_logw,
+              bin_scatter_child_w, 
+              bin_scatter_child_logw),
+             ncol=2,
+             top = "Fig2.: Histograms",
+             bottom = "Note: .")
+
+```
+
+
+\newpage
+### A4. Interactions
+
+\newpage
+### A5. Regression
