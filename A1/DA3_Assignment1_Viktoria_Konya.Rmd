@@ -147,14 +147,13 @@ blank <- grid.rect(gp=gpar(col="white"))
 ### Introduction
 \vspace{-3mm}
 
-The goal of this report is to predict the hourly wages of Financial managers focusing on professionals with undergraduate or graduate degrees (BA or higher).
+The goal of this report is to predict the hourly wages of Financial managers using socio-demographical and job related information about the professionals. The estimated models are going to be evaluated with the RMSE and the BIC measures in the full sample as well as with the cross-validated RMSE in order to choose the model with the best predictive properties.
 
-
+\vspace{-3mm}
 ### Sample selection
 \vspace{-3mm}
 
-The source of my analysis is the CPS dataset that I filtered based on occupation code and the education level. Managers between the age of 21 and 64 and with the minimum of 20 working hours per week were considered only in order to focus on the active labor force with a degree. Observations with earnings below one dollar per hour were excluded as such low wage is unlikely among Financial managers. The sample consists of 881 observations with 416 women and 446 men.
-
+The source of the analysis is the CPS dataset and we are going to focus on financial managers with undergraduate or graduate degrees (BA or higher). Managers between the age of 21 and 64 and with the minimum of 20 working hours per week were considered only in order to focus on the active labor force with a degree. Observations with earnings below one dollar per hour were excluded as such low wage is unlikely among Financial managers. The final sample consists of 881 observations with 416 women and 446 men.
 
 ```{r data_cleaning_sample, echo = F, include = F}
 
@@ -170,19 +169,21 @@ df <- df %>%
   # Filter : has hourly earning larger than one dollar, min. BA degree, active age
   filter( uhours>=20 & earnwke>uhours & grade92>=43 & age>=21 & age<=64)  %>%
   
-  # Create gender dummy and character version for summary table
-  mutate( female = as.numeric( sex==2 ) ) %>% 
-  mutate( female_char = case_when(
-            female == 1 ~ "Female",
-            female == 0 ~ "Male" )) %>%
-  
   # Create hourly wage
   mutate( w = earnwke/uhours ) %>%
     
   # Create log hourly wage
   mutate( lnw = log( w ) ) %>%
+  
+  # A. Demographics 
+  
+  # Create gender dummy and character version for summary table
+  mutate( female = as.numeric( sex==2 ) ) %>% 
+  mutate( female_char = case_when(
+            female == 1 ~ "Female",
+            female == 0 ~ "Male" )) %>%
     
-  # Create age polinomials
+  # Create age polynomials
   mutate(agesq=age^2,
          agecu=age^3,
          agequ = age^4) %>%
@@ -205,36 +206,88 @@ df <- df %>%
           educ_Profess = ifelse(educ == "Professional", 1, 0),  
           educ_PhD = ifelse(educ == "PhD", 1, 0))  %>%
 
-  # Create class flag
-  mutate(class_cat = case_when(
-            class %in% c('Government - Federal' , 'Government - State', 'Government - Local') ~ 0,
-            class %in% c('Private, For Profit' , 'Private, Nonprofit') ~ 1)) %>%
-         
-  # Union membership
-  mutate(union_membership = case_when(
-            unionmme %in% c('Yes') ~ 1,
-            unionmme %in% c('No') ~ 0))  %>%
-
+  # Create marital status groups for summary table
+  mutate(marital_status = factor(case_when(
+          marital == 1 | marital == 2 ~ "Married",
+          marital == 3 | marital == 5 | marital == 6 ~ "Divorced" ,   
+          marital == 4 ~ "Widowed" ,
+          marital == 7 ~ "Never Married"),
+          levels = c("Married", "Divorced", "Widowed" , "Never Married") ))  %>% 
+  
+  # Create marital status dummies
+    mutate(
+          marital_married = ifelse(marital == 1 | marital == 2, 1, 0),
+          marital_divorced = ifelse(marital == 3 | marital == 5 | marital == 6, 1, 0),  
+          marital_widowed = ifelse(marital == 4, 1, 0),  
+          marital_never_married = ifelse(marital == 7, 1, 0))  %>%
+  
   # Own child
   mutate(has_child = case_when(
             ownchild == 0 ~ 0,
             ownchild > 0 ~ 1))  %>%
   
-  # Keep only the useful fields
-  select(hhid, earnwke, uhours, w, lnw, age, agesq, agecu, agequ, female, class_cat, educ, educ_BA, educ_MA, educ_Profess, educ_PhD, union_membership, has_child, state, race, marital, ethnic)
-
+  # Create race groups for summary table
+  mutate(race_group = factor(case_when(
+          race == 1 ~ "White",
+          race == 2 ~ "African-American" ,   
+          race == 4 ~ "Asian" ,
+          race %in% c(3, 5, 6, 7, 9, 10, 13, 19) ~ "Other non-white"),
+          levels = c("White", "African-American", "Asian", "Other non-white")))  %>% 
+   
+  # Create race dummies
+   mutate(
+          race_white = ifelse(race == 1, 1, 0),
+          race_afram = ifelse(race == 2, 1, 0),  
+          race_asian = ifelse(race == 4, 1, 0),  
+          race_other = ifelse(race %in% c(3, 5, 6, 7, 9, 10, 13, 19) , 1, 0))  %>%
   
-# Check other variables 
-unique(df$state)
-unique(df$marital)
-unique(df$race)
-unique(df$ethnic)
+  # B. Work-related variables
+  
+  # Union membership
+  mutate(union_membership = case_when(
+            unionmme == 'Yes' |  unioncov == "Yes" ~ 1,
+            unionmme != 'Yes' &  unioncov != "Yes" ~ 0))  %>%
+  
+  # Create work type dummies
+    mutate(
+        work_type_privprof = ifelse(class == "Private, For Profit", 1, 0),
+        work_type_fedgov = ifelse(class == "Government - Federal", 1, 0),
+        work_type_stategov = ifelse(class == "Government - State", 1, 0),
+        work_type_locgov = ifelse(class == "Government - Local", 1, 0),
+        work_type_privnonprof = ifelse(class == "Private, Nonprofit", 1, 0))  %>%
+               
+  # Keep only the useful fields
+  select(hhid, 
+         # Outcome
+         earnwke, uhours, w, lnw, 
+         # Demographics
+         age, agesq, agecu, agequ, female, 
+         educ, educ_BA, educ_MA, educ_Profess, educ_PhD, 
+         marital_status, marital_married, marital_divorced, marital_widowed, marital_never_married, has_child,
+         race_group, race_white, race_afram, race_asian,  race_other,
+         # Work related variables    
+         union_membership, work_type_privprof, work_type_fedgov, work_type_stategov, work_type_locgov, work_type_privnonprof, class, ind02)
+
+
+# Check recodings  
+df %>% group_by(race_group,race_white, race_afram, race_asian, race_other) %>% summarize(n())
+df %>% group_by(educ,educ_BA, educ_MA, educ_Profess, educ_PhD) %>% summarize(n())
+df %>% group_by(class,work_type_privprof, work_type_fedgov, work_type_stategov, work_type_locgov, work_type_privnonprof) %>% summarize(n())
+df %>% group_by(marital_status,marital_married, marital_divorced, marital_widowed, marital_never_married) %>% summarize(n())
+df %>% group_by(ind02) %>% summarize(n())
 
 # Summary
 summary(df)
 
 ```
 
+\vspace{-3mm}
+### Predictors of hourly wages
+\vspace{-3mm}
+
+First, let's consider the potential predictors of the hourly wages. **Fig.3.** in **Appendix A3.** shows the relationship of the outcome with each predictor separately. From the socio-demographic variables we are going to consider the gender, the age, the level of education, whether the manager has children, the marital status and the race. Age seems to be a strong predictor with 26.5% correlation with the outcome. The lowess smoother suggests concave pattern of association hence we can we can approximate the relationship with a quadratic function. The wage disadvantage of female managers is about 10 dollars per hour and we can expect earnings to increase with an MA degree but the returns of additional education are not clear. Also, married managers and managers with kids in the households are expected to earn somewhat higher. From the job related variables the the type of the job and union membership were considered, however as financial managers are mainly employed by private companies the predictive power of these variables are not expected to be strong. 
+
+We can also assume that the pattern of association between the age and the wages and the pattern of association between the education level and the wages are different among male and female financial managers. **Fig.4.** in **Appendix A4.** shows the relationship with the hourly wages by subgroups. With the same level of education, female financial managers can expect lower salaries in all education levels. However, in case of the professional degree and the PhD degree the confidence intervals show high uncertainty suggesting that we cannot reject the hypotheses that the average salaries are the same in the two subgroups. Regarding the age, the quadratic relationship seems fine among male managers, while among female managers the relationship seems more likely to be cubic. We can incorporate these patterns in our analysis by adding interaction terms to out prediction model.
 
 ```{r eda_summary_table, echo = F, include = F}
 
@@ -249,27 +302,35 @@ Range <- function(x){max(x, na.rm = TRUE) - min(x, na.rm = TRUE)}
 Missing <- function(x){sum(is.na(x))}
 
 eda_summary_table <- datasummary(  
-              ( `Earnings` = earnwke ) +
-              ( `Hours worked` = uhours ) +
+              # ( `Earnings` = earnwke ) +
+              # ( `Hours worked` = uhours ) +
               ( `Hourly wage` = w ) +
               ( `Log of Hourly wage` = lnw ) + 
               ( `Age` = age ) +  
               ( `Female` = female ) +
-              ( `Job type` = class_cat ) +
               ( `BA Degree` = educ_BA ) + 
               ( `MA Degree` = educ_MA ) +                 
               ( `Professional` = educ_Profess ) +                 
               ( `PhD` = educ_PhD ) +
-              ( `Union member` = union_membership ) +
-              ( `Child`= has_child ) ~
+              ( `Marital - Married` = marital_married ) +
+              ( `Marital - Divorced` = marital_divorced ) +
+              ( `Marital - Widowed` = marital_widowed ) +
+              ( `Marital - Never maried` = marital_never_married ) +
+              ( `Has child` = has_child ) +
+              ( `Race - White` = race_white ) +
+              ( `Race - African-American` = race_afram ) +
+              ( `Race - Asian` = race_asian ) +
+              ( `Race - Other non-white` = race_other ) +
+              ( `Union member` = union_membership ) +              
+              ( `Job type - Private - For-profit` = work_type_privprof ) +                
+              ( `Job type - Government - Federal` = work_type_fedgov ) +             
+              ( `Job type - Government - State` = work_type_stategov ) +                
+              ( `Job type - Government - Local` = work_type_locgov ) +                  
+              ( `Job type - Private, Nonprofit` = work_type_privnonprof )   ~
     (N + Missing + Mean + SD + Min + Max + Range + P05 + Median  + P95),
     data = df,
     title = 'Descriptive statistics' ) %>% 
     kableExtra::kable_styling(latex_options = "hold_position", font_size = 9)
-
-# Summary
-summary(df)
-
 
 ```
 
@@ -283,10 +344,10 @@ summary(df)
 # Moved to Appendix A2
 
 # Earnings
-hist_earnings <- histograms(df$earnwke, 'Earings', bin = 100 ) 
+# hist_earnings <- histograms(df$earnwke, 'Earings', bin = 100 ) 
 
 # Hours worked
-hist_hours_worked <- histograms(df$uhours, 'Hours worked', bin = 1)
+# hist_hours_worked <- histograms(df$uhours, 'Hours worked', bin = 1)
 
 # Hourly wage
 hist_hourly_wage <- histograms(df$w, 'Hourly wage', bin = 3)
@@ -309,45 +370,34 @@ hist_age <- histograms(df$age, 'Age', bin = 3)
 
 # Age
 scatter_w_age <- scatter(data = df, x_var = age, y_var = w, x_lab = "Age", y_lab = "Hourly wages") 
-scatter_logw_age <- scatter(data = df, x_var = age, y_var = lnw, x_lab = "Age", y_lab = "Log of Hourly wages") 
 
 # D. Bin scatters
 
 # Gender
 bin_scatter_felame_w <- bin_scatters_multi(data = df, x_var = female, y_var = w, x_lab = "Gender", y_lab = "Hourly wages") + scale_x_discrete(labels = c("Male", "Female")) 
 
-bin_scatter_felame_logw <- bin_scatters_multi(data = df, x_var = female, y_var = lnw, x_lab = "Gender", y_lab = "Log of Hourly wages") + scale_x_discrete(labels = c("Male", "Female")) 
-
-
-# Job type
-bin_scatter_jobtype_w <- bin_scatters_multi(data = df, x_var = class_cat, y_var = w, x_lab = "Job type", y_lab = "Hourly wages") + scale_x_discrete(labels = c("Government", "Private")) 
-
-bin_scatter_jobtype_logw <- bin_scatters_multi(data = df, x_var = class_cat, y_var = lnw, x_lab = "Job type", y_lab = "Log of Hourly wages") + scale_x_discrete(labels = c("Government", "Private")) 
-
-
 # Education
 bin_scatter_educ_w <- bin_scatters_multi(data = df, x_var = educ, y_var = w, x_lab = "Education level", y_lab = "Hourly wages") + scale_x_discrete(labels = c("BA Degree", "MA Degree", "Professional", "PhD")) 
-
-bin_scatter_educ_logw <- bin_scatters_multi(data = df, x_var = educ, y_var = lnw, x_lab = "Education level", y_lab = "Log of Hourly wages") + scale_x_discrete(labels = c("BA Degree", "MA Degree", "Professional", "PhD")) 
-
-
-# Union membership
-bin_scatter_union_w <- bin_scatters_multi(data = df, x_var = union_membership, y_var = w, x_lab = "Member of union", y_lab = "Hourly wages") + scale_x_discrete(labels = c("No", "Yes")) 
-
-bin_scatter_union_logw <- bin_scatters_multi(data = df, x_var = union_membership, y_var = lnw, x_lab = "Member of union", y_lab = "Log of Hourly wages") + scale_x_discrete(labels = c("No", "Yes")) 
-
 
 # Child
 bin_scatter_child_w <- bin_scatters_multi(data = df, x_var = has_child, y_var = w, x_lab = "Has own child", y_lab = "Hourly wages") + scale_x_discrete(labels = c("No", "Yes")) 
 
-bin_scatter_child_logw <- bin_scatters_multi(data = df, x_var = has_child, y_var = lnw, x_lab = "Has own child", y_lab = "Log of Hourly wages") + scale_x_discrete(labels = c("No", "Yes")) 
+# Marital
+bin_scatter_marital_w <- bin_scatters_multi(data = df, x_var = marital_status, y_var = w, x_lab = "Marital status", y_lab = "Hourly wages") 
 
-# State
-bin_scatters_multi(data = df, x_var = state, y_var = lnw, x_lab = "State", y_lab = "Log of Hourly wages") 
+# Race
+bin_scatter_race_w <- bin_scatters_multi(data = df, x_var = race_group, y_var = w, x_lab = "Race", y_lab = "Hourly wages") 
+
+# Job type
+bin_scatter_jobtype_w <- bin_scatters_multi(data = df, x_var = class, y_var = w, x_lab = "Job type", y_lab = "Hourly wages") + scale_x_discrete(labels = c("Gov. Federal", "Gov. Local", "Gov. State", "Priv. For-prof.", "Priv. Non-prof.")) 
+
+# Union membership
+bin_scatter_union_w <- bin_scatters_multi(data = df, x_var = union_membership, y_var = w, x_lab = "Member of union", y_lab = "Hourly wages") + scale_x_discrete(labels = c("No", "Yes")) 
 
 
 # Pairwise summary table
 # ggpairs(df %>% select(-c(state, hhid, educ, uhours, earnwke, agesq, agecu, agequ)))
+# ggpairs(df %>% select(w, age, agesq, agecu, agequ))
 
 ```
 
@@ -367,28 +417,31 @@ scatter_w_age_female <- scatter(data = df %>% filter(female == 1), x_var = age, 
 
 ```
 
-### Predictors of hourly wages
 
-
-### Regression analysis and model comparison
+\vspace{-3mm}
+### Predictive models and performance comparison
 \vspace{-3mm}
 
+We can start our model setup by estimating the simplest model and then enrich our prediction model by adding more explanatory variables. **Table 3** in **Appendix A5.** summarizes the results of our regressions with the measures of fit. In the first model only age with a quadratic form was added as the only predictor of the hourly wages. The second model was extended with more demographic information about the managers and in the third model job related information was added as well. Finally, the last specification adds the interactions suggested by **Fig.4.** in **Appendix A4.**.
 
-```{r regressions, echo = F, include = F}
+If we look at the estimated coefficients, we can see that as we anticipated, female financial managers are expected to earn less then their male coworkers, wages expected to grow with the age at a diminishing rate and having an MA compared to having only a BA degree also contributes to the higher salaries. Regarding the marital status, widowed and never married managers are expected to earn somewhat less than their married coworkers, and managers with kids in their households can expect higher salaries compared to managers without kids. As for the job related variables, managers with union membership have lower salaries than managers without union membership.
+
+
+```{r regressions,  echo = F, include = F}
 
 # Model estimation 
 
-# Model 1: Simple linear regression
+# Model 1: Simple regression
 model1 <- as.formula(w ~ age + agesq ) 
 
-# Model 2:
-model2 <- as.formula(w ~ age + agesq + female + educ_MA + educ_Profess + educ_PhD ) 
+# Model 2: Demographic information
+model2 <- as.formula(w ~ age + agesq + female + educ_MA + educ_Profess + educ_PhD  + marital_status + race_group + has_child) 
 
-# Model 3:
-model3 <- as.formula(w ~ age + agesq + female + educ_MA + educ_Profess + educ_PhD + union_membership + class_cat + has_child)
+# Model 3: Demographic + job information
+model3 <- as.formula(w ~ age + agesq + female +  educ_MA + educ_Profess + educ_PhD  + marital_status + race_group + has_child + union_membership + class) 
 
-# Model 4:
-model4 <- as.formula(w ~ age + agesq + female + educ_MA + educ_Profess + educ_PhD + female * age + female * agesq + female * educ_MA + union_membership + class_cat + has_child)
+# Model 4: Demographic + job information + Interactions
+model4 <- as.formula(w ~ age + agesq + female +  educ_MA + educ_Profess + educ_PhD  + marital_status + race_group + has_child + union_membership + class +  female * educ_MA + female * age + female * agesq)
 
 
 # A. Running models
@@ -407,11 +460,25 @@ varname_report <- c("(Intercept)" = "Intercept",
                     "agesq" = "Age sqare",
                     "female" = "Female",
                     "educ_MA" = "Education - MA",
-                    "educ_Profess" = "Education - Professional", 
+                    "educ_Profess" = "Education - Professional",
                     "educ_PhD" = "Education - PhD",
+                    "marital_statusDivorced" = "Marital - Divorced",
+                    "marital_statusWidowed" = "Marital - Widowed",
+                    "marital_statusNeverMarried" = "Marital - Never married",   
+                    "race_groupAfrican-American" = "Race - African-American",  
+                    "race_groupAsian" = "Race - Asian",  
+                    "race_groupOthernon-white" = "Race - Other non-White",
+                    "has_child" = "Has child",
                     "union_membership" = "Union member",
-                    "class_cat" = "Private sector",
-                    "has_child" = "Has child")
+                    "classGovernment-Local" = "Job - Government-Local",
+                    "classGovernment-State" = "Job - Government-State",
+                    "classPrivate,ForProfit" = "Job - Private,ForProfit",
+                    "classPrivate,Nonprofit" = "Job - Private,Nonprofit",
+                    "Female x educMADegree" = "Female x Education - MA",
+                    "Female x educProfessional" = "Female x Education - Professional",
+                    "Female x educPhD" = "Female x Education - PhD",
+                    "Age x Female" = "Age x Female",
+                    "Age sqare x Female" = "Age sqare x Female")
 
 # Register number of coeffs estimated                   
 fitstat_register("k", function(x){length( x$coefficients ) - 1}, "No. Variables")
@@ -421,18 +488,48 @@ etable( reg1 , reg2 , reg3 , reg4 ,
         title = 'Regression models for predicting horly wages',
         #headers = c("(1)","(2)","(3)","(4)"),
         dict = varname_report,
-        # drop = vars_omit ,
         # group = groupConf ,
         se.below = TRUE,
         se.row = FALSE,
         # coefstat = 'se',
-        fitstat = c('aic','bic','rmse','r2','ar2', 'n','k'),
+        fitstat = c('aic','bic','rmse', 'n','k'),
         tex = TRUE, 
         file = 'reg.tex',
         replace = TRUE)
 
 
 ```
+
+
+```{r regressions_compare, echo = F}
+
+# Compare models based on full sample RMSE and BIC
+gof <- etable( reg1 , reg2 , reg3 , reg4 ,
+        title = 'Regression models for predicting horly wages',
+        fitstat = c('r2','bic','rmse', 'n','k'))
+
+model <- c("Model 1", "Model 2", "Model 3", "Model 4")
+r2 <- c(gof$reg1[27], gof$reg2[27], gof$reg3[27] ,gof$reg4[27])
+rmse <- c(gof$reg1[28], gof$reg2[28], gof$reg3[28] ,gof$reg4[28])
+bic <- c(gof$reg1[29], gof$reg2[29], gof$reg3[29] ,gof$reg4[29])
+vars <- c(gof$reg1[31], gof$reg2[31], gof$reg3[31] ,gof$reg4[31])
+
+gof_table <- data.frame(model, vars, r2, bic, rmse)
+
+colnames(gof_table)<- c("Model","N coeff","R-squared", "RMSE", "BIC")
+
+kable(gof_table, caption = "Model evaluation based on full sample RMSE and BIC") %>%
+  kable_styling(full_width = F, font_size = 10)
+
+```
+
+Let's take a look at the measures of fit of the four models to find the best specification for our prediction problem. **Table 1** summarizes the RMSE and BIC calculated from the full sample. The RMSE continuously decreases as we add more predictors to the model, suggesting that the most complex model with the interaction terms capture the best the variation of the hourly wages. In contrast, if we rely on the BIC measure, we would chose a simpler model with only the socio-demographic information (Model 2).
+
+\vspace{-3mm}
+### Performance and model complexity
+\vspace{-3mm}
+
+Let's also cross validate our results using 4-fold cross-validation. **Fig.1.** shows the average test RMSE of the four folds for each model specification, starting with the simplest model with only 2 predictors.
 
 
 ```{r cv, echo = F, include = F}
@@ -483,18 +580,13 @@ cv_mat #CV RMSE: Model3
 
 ```
 
-
-### Performance and model complexity
-\vspace{-3mm}
-
-
-```{r model_complexity, echo = F, fig.align="center", fig.height=2.8, fig.width=4}
+```{r model_complexity, echo = F, fig.align="center", fig.height=2.8, fig.width=5}
 
 m_comp <- c()
 models <- c("reg1", "reg2", "reg3", "reg4")
 
 for( i in 1 : length(cv) ){
-  m_comp[ i ] <- length( get( models[i] )$coefficient  - 1 ) 
+  m_comp[ i ] <- length( get( models[i] )$coefficient )  - 1 
 }
 
 m_comp <- tibble( model = models , 
@@ -504,28 +596,21 @@ m_comp <- tibble( model = models ,
 ggplot( m_comp , aes( x = complexity , y = RMSE ) ) +
   geom_point(color='red',size=2) +
   geom_line(color='blue',size=0.5)+
-  labs(x='Number of explanatory variables',y='Averaged RMSE on test samples',
-       title='Prediction performance and model compexity') +
-  theme_bw()
+  labs(x='Number of explanatory variables',y='Avg. RMSE on test samples',
+       title='Fig.1.: Prediction performance and model compexity') +
+  scale_x_continuous( breaks=c(0,2,13,18,21)) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(size = 11L,face = "bold", hjust = 0.5),
+    axis.title.y = element_text(face = "bold"),
+    axis.title.x = element_text(face = "bold"),
+    legend.position = "none"
+  )
+  
 
 ```
 
-
-
-
-
-### Summary
-\vspace{-3mm}
-
-
-
-
-
-
-
-
-
-
+This approach also favors the second model with only the socio-demographic information over the last model with more complex patterns. The conclusion based on the  cross-validated RMSE is in line with those of the BIC which also suggested that the second model had the best properties. If we take a look at the exact RMSE values in **Appendix A6.** we can see that the difference in the average RMSE between Model 2, 3 and 4 is so small that even if a latter two outperformed the simpler model, then would still prefer to keep the second model instead of adding 5 and 8 additional variables to the specification.
 
 \newpage
 ### Appendix
@@ -542,18 +627,18 @@ eda_summary_table
 \newpage
 ### A2. One variable analysis
 
-```{r A2_eda_1_var_analysis, echo = F, fig.align='center', fig.height=8, fig.width=10}
+```{r A2_eda_1_var_analysis, echo = F, fig.align='center', fig.height=6, fig.width=10}
 
 # Histograms
 grid.arrange( grobs = list(
-              hist_earnings,
-              hist_hours_worked,
+              # hist_earnings,
+              # hist_hours_worked,
               hist_hourly_wage, 
               hist_log_hourly_wage,
               hist_age),
              ncol=2,
-             top = "Fig1.: Histograms",
-             bottom = "Note: .")
+             top = "Fig2.: Histograms",
+             bottom = "Note: Normal curves were added to the distributions.")
 
 ```
 
@@ -561,38 +646,29 @@ grid.arrange( grobs = list(
 \newpage
 ### A3. Relationship with outcome variable
 
-```{r A3_eda_2_var_analysis1, echo = F, fig.align='center', fig.height=13, fig.width=10}
+```{r A3_eda_2_var_analysis1, echo = F, fig.align='center', fig.height=12, fig.width=10}
 
 # Relationship with outcome
 grid.arrange( grobs = list(
               scatter_w_age,
-              scatter_logw_age,
               bin_scatter_felame_w, 
-              bin_scatter_felame_logw,
-              bin_scatter_jobtype_w, 
-              bin_scatter_jobtype_logw,
               bin_scatter_educ_w, 
-              bin_scatter_educ_logw),
-             ncol=2,
-             top = "Fig2.: Relationship with outcome",
-             bottom = "Note: .")
-
-```
-
-\newpage
-```{r A3_eda_2_var_analysis2, echo = F, fig.align='center', fig.height=7, fig.width=10}
-
-# Relationship with outcome
-grid.arrange( grobs = list(
-              bin_scatter_union_w,
-              bin_scatter_union_logw,
               bin_scatter_child_w, 
-              bin_scatter_child_logw),
+              bin_scatter_marital_w, 
+              bin_scatter_race_w,
+              bin_scatter_jobtype_w ,
+              bin_scatter_union_w),
              ncol=2,
-             top = "Fig2.: Relationship with outcome",
-             bottom = "Note: .")
+             top = "Fig3.: Relationship with outcome",
+             bottom = "Note: Horizontal lines show the average hourly wages within the category.")
+
+
+
 
 ```
+
+
+
 
 
 \newpage
@@ -608,8 +684,8 @@ grid.arrange( grobs = list(
               scatter_w_age_male + ylim(c(0,120)) + labs(title = "Male"), 
               scatter_w_age_female  + ylim(c(0,120)) + labs(title = "Female") ),
              ncol=2,
-             top = "Fig3.: Interactions",
-             bottom = "Note: .")
+             top = "Fig4.: Interactions",
+             bottom = "Note: Confidence intervals were added to the averages.")
 
 
 
@@ -620,6 +696,18 @@ grid.arrange( grobs = list(
 ### A5. Regression
 
 \include{reg.tex}
+
+
+
+\newpage
+### A6. Cross-validated test RMSE
+
+```{r A6_CV, echo = F}
+
+kable(cv_mat, caption = "Model evaluation based on cross-validated test RMSE") %>%
+  kable_styling(full_width = F, font_size = 10)
+
+```
 
 
 
