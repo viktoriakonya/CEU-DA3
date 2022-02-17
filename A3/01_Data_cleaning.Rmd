@@ -1,0 +1,501 @@
+
+---
+title: "Firm exit prediction - Data cleaning"
+# subtitle: ""
+author: "Viktória Kónya"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+geometry: margin=1.8cm
+fontsize: 10pt
+output:
+  html_document:
+    code_folding: hide
+    toc: true
+---
+
+
+```{r setup, include = F}
+
+# Chunk setup
+knitr::opts_chunk$set(warning = F, message = F)
+
+```
+
+```{r folder_library_setup}
+
+# Clear environment
+rm(list=ls())
+
+# Folder locations
+main <- getwd()
+data_raw <- paste0(main, '/data/raw')
+data_work <- paste0(main, '/data/work')
+output <- paste0(main, '/output')
+
+# Import libraries
+library(tidyverse)
+library(modelsummary)
+library(Hmisc)
+library(kableExtra) 
+library(gridExtra)
+
+```
+
+### Dataset 
+
+Import the data and check the variables.
+
+```{r data_import}
+
+# Import cleaned dataset
+data <- read_csv("https://osf.io/3qyut/download") 
+
+```
+
+```{r}
+
+# Check summary statistics
+datasummary_skim(data, 'numeric') 
+
+```
+
+There are 46412 individual firms in the dataset for 2005-2016 period. For the further analysis, I will restrict the dataset for the 2011-2014 periods (one lagging, 2 leading periods are needed for the 2012 cross-section).
+
+The following fields have high missing rates (above 90%) : COGS, finished_prod, net_dom_sales, net_exp_sales. I will drop these variables from the dataset.
+
+```{r}
+
+# Keep only 2011-2014
+data <- data %>%
+  filter((year >= 2011) & (year <= 2014) & (balsheet_length >= 360))
+
+# Drop variables with many NAs
+data <- data %>%
+  select(-c(COGS, finished_prod, net_dom_sales, net_exp_sales, wages)) 
+
+```
+
+
+### Label engineering
+
+The target variable the growth rate over two years which was defined using the Compound Annual Growth Rate (CAGR) formula:
+
+![](C:/Users/User/Documents/GitHub/CEU-DA3/A3/output/formula.jpg){ width=30% }
+
+
+* The sales revenue was converted to million EUR first and 
+* For new firms (age <= 1 or no full year balance sheet available) and for firms that left the market the growth rate was modified to zero.
+
+```{r}
+
+# Create all year - comp_id combination (NAs will be added to missing combinations)
+#data <- data %>%
+ # complete(year, comp_id)
+
+# Generate status_alive; if sales larger than zero and not-NA, then firm is alive
+data  <- data %>%
+  mutate(status_alive = sales > 0 & !is.na(sales) %>%
+           as.numeric(.))
+
+# Create growth variables - Floor sales to 1, rescale and create logs
+data <- data %>%
+  mutate(sales = ifelse(sales < 0, 1, sales), # Floor sales to 1
+         sales_lag1 = Lag(sales),
+         ln_sales = ifelse(sales > 0, log(sales), 0),
+         sales_mil=sales/1000000, # Create sales in million
+         sales_mil_log = ifelse(sales > 0, log(sales_mil), 0)) # Create log of million sales
+
+# Create square of sales mil
+data <- data %>%
+  mutate(sales_mil_log_sq=sales_mil_log^2)
+
+# Create first difference
+data <- data %>%
+  group_by(comp_id) %>%
+  mutate(d1_sales_mil_log = sales_mil_log - Lag(sales_mil_log, 1)) %>%
+  ungroup()
+
+# Add 0 sales change for new firms (age <= 1 or no balance sheet available for the year)
+data <- data %>%
+  mutate(age = (year - founded_year) %>%
+           ifelse(. < 0, 0, .),
+         new = as.numeric(age <= 1) %>% #  (age could be 0,1 )
+           ifelse(balsheet_notfullyear == 1, 1, .),
+         d1_sales_mil_log = ifelse(new == 1, 0, d1_sales_mil_log),
+         new = ifelse(is.na(d1_sales_mil_log) , 1, new), # if no data is available for the last year then the company is new
+         d1_sales_mil_log = ifelse(is.na(d1_sales_mil_log), 0, d1_sales_mil_log)
+         )
+
+# Winsorize the tails [-1.5, 1.5]
+data <- data %>%
+  mutate(flag_low_d1_sales_mil_log = ifelse(d1_sales_mil_log < -1.5, 1, 0),
+         flag_high_d1_sales_mil_log = ifelse(d1_sales_mil_log > 1.5, 1, 0),
+         d1_sales_mil_log_mod = ifelse(d1_sales_mil_log < -1.5, -1.5,
+                                       ifelse(d1_sales_mil_log > 1.5, 1.5, d1_sales_mil_log)),
+         d1_sales_mil_log_mod_sq = d1_sales_mil_log_mod^2)
+
+
+data <- data %>%
+  group_by(comp_id) %>%
+  mutate(sales_growth_2 = ((lead(sales_mil, 2) / sales_mil)^(1/2)-1 ) * 100) %>%
+  ungroup()
+
+# Example
+data_ch <- data %>% filter(comp_id == '1001541') %>%  select(comp_id, year, sales, sales_mil, sales_growth_2) %>% arrange(comp_id)
+
+kable(data_ch) %>%
+  kable_styling(font_size = 11, full_width = F) %>%
+  scroll_box(width = "900px")
+
+
+```
+
+
+### Sample design
+
+2012 cross section was selected for the sample.
+
+* Only kept alive firms (with sales > 0)
+* Filtered out firms with very low (below 1000 EUR) and very high (above 10M EUR) sales.
+* Firms that did not have 4 years available (2011-2014) data were excluded.
+* Filtered out firms with missing growth rate.
+* The sample consists of 13.339 firms
+
+```{r}
+
+# 2012 cross section and filter for alive firms and firms below 10m euro revenues and above 1000 euros
+data <- data %>%
+  filter(status_alive == 1) %>%
+  filter(!(sales_mil > 10)) %>%
+  filter(!(sales_mil < 0.001))  
+
+# Keep only firms with complete 4 yers data
+complete_filter <- data %>% group_by(comp_id) %>% dplyr::summarize(count_per = n()) %>% filter(count_per == 4)
+data <- data %>% filter(comp_id %in% complete_filter$comp_id)
+
+# Keep with available growth rate and 2012 cross-section
+data <- data %>% 
+          filter(!is.na(sales_growth_2)) %>% 
+          filter(year == 2012)
+
+```
+
+Let's check the growth rate.
+
+```{r}
+
+# Histogram of sales growth
+p1 <- ggplot( data  , aes(x = sales_growth_2)) +
+    geom_histogram( aes(y = (..count..)/sum(..count..)), binwidth = 5, fill="#238b45", color = 'gray50', na.rm = T) +
+    labs(y = 'Percent',x = "Sales growth" ) +
+    scale_y_continuous(labels = scales::percent_format(1)) +
+    theme_bw() +
+    theme(
+      plot.title = element_text(size = 12L,
+                                face = "bold", hjust = 0.5),
+      axis.title.y = element_text(face = "bold"),
+      axis.title.x = element_text(face = "bold"),
+      legend.position = "none")
+
+p2 <- ggplot( data %>% filter(sales_growth_2 < 500)  , aes(x = sales_growth_2)) +
+    geom_histogram( aes(y = (..count..)/sum(..count..)), binwidth = 5, fill="#238b45", color = 'gray50', na.rm = T) +
+    labs(y = 'Percent',x = "Sales growth" ) +
+    scale_y_continuous(labels = scales::percent_format(1)) +
+    theme_bw() +
+    theme(
+      plot.title = element_text(size = 12L,
+                                face = "bold", hjust = 0.5),
+      axis.title.y = element_text(face = "bold"),
+      axis.title.x = element_text(face = "bold"),
+      legend.position = "none")
+
+grid.arrange(p1, p2, nrow = 1)
+
+
+```
+
+The distribution of the growth rates are centered close to zero with a long right tail. There are 7 firms with extreme high growth rate above 1000%. 
+
+```{r}
+
+kable(data %>% filter(sales_growth_2 > 1000)) %>%
+  kable_styling(font_size = 11, full_width = F) %>%
+  scroll_box(width = "900px")
+
+```
+
+
+For the analysis I will exclude firms with growth rate above 2000% as such record high growth rate is unlikely among SMEs.
+
+```{r}
+
+data <- data %>% filter(sales_growth_2 < 2000)
+  
+```
+
+
+In order to decide about the cutoff value for fast growing, let's check the summary statistics of the growth rate.
+
+```{r}
+
+# Summary
+P60 <- function(x){quantile(x,0.60,na.rm=T)}
+P65 <- function(x){quantile(x,0.65,na.rm=T)}
+P70 <- function(x){quantile(x,0.70,na.rm=T)}
+P75 <- function(x){quantile(x,0.75,na.rm=T)}
+P80 <- function(x){quantile(x,0.80,na.rm=T)}
+P85 <- function(x){quantile(x,0.85,na.rm=T)}
+P90 <- function(x){quantile(x,0.90,na.rm=T)}
+P95 <- function(x){quantile(x,0.95,na.rm=T)}
+P05 <- function(x){quantile(x,0.05,na.rm=T)}
+# Range <- function(x){max(x, na.rm = TRUE) - min(x, na.rm = TRUE)}
+Missing <- function(x){sum(is.na(x))}
+Mean2 <- function(x){mean(x,na.rm=T)}
+
+datasummary(  (sales_growth_2)  ~ 
+    (N + Missing + Mean2 + SD + Min + Max + P05 + Median  + P60 + P65 + P70 + P75 + P80 + P85 + P90 + P95),
+    data = data,
+    title = 'Descriptive statistics of growth rate' ) %>% 
+    kableExtra::kable_styling(latex_options = "hold_position", font_size = 10)
+
+
+```
+
+The mean growth rate is 10.81%. From the percentiles we can see that about 30-35% of the firms have higher growth rate. With 25% growth rate 20% of the firms will be classified as fast growing and with 30% about 15%. For classification it is needed to have enough observations in each group so I would choose 30% as a round cutoff value. 
+
+```{r}
+
+# Add fast growing flag as growth rate > 30%
+data <- data %>% mutate(fast_growing_flg = ifelse(sales_growth_2 > 30, 1, 0))
+
+# Create factor
+data <- data %>%
+  mutate(fast_growing_f = factor(fast_growing_flg, levels = c(0,1)) %>%
+           recode(., `0` = 'not_fast_growing', `1` = "fast_growing"))
+
+```
+
+Let's check the number of firms by the fast growing flag.
+
+```{r}
+
+kable(data %>% group_by(fast_growing_flg) %>%  dplyr::summarize(count = n())) %>%
+  kable_styling(font_size = 11, full_width = F) %>%
+  scroll_box(width = "900px")
+
+```
+
+We have 11.129 observations in the baseline and 2207 obseravtions in the fast growing group.
+
+### Feature engineering - Industry andrelated variables 
+
+Industry related variables were created:
+
+* ind2_cat: Industry categories were grouped and converted to factor
+* age and age squared
+* factors were created from the characters: gender_m, m_region_loc, urban_m
+
+```{r}
+
+# Industry category codes grouped
+data <- data %>%
+  mutate(ind2_cat = ind2 %>%
+           ifelse(. > 56, 60, .)  %>%
+           ifelse(. < 26, 20, .) %>%
+           ifelse(. < 55 & . > 35, 40, .) %>%
+           ifelse(. == 31, 30, .) %>%
+           ifelse(is.na(.), 99, .)
+           )
+
+# Other industry variables: age, foreign, gender, region
+data <- data %>%
+  mutate(age2 = age^2,
+         gender_m = factor(gender, levels = c("female", "male", "mix")),
+         m_region_loc = factor(region_m, levels = c("Central", "East", "West")))
+
+# Create factors for urban, industry
+data <- data %>%
+  mutate(urban_m = factor(urban_m, levels = c(1,2,3)),
+         ind2_cat = factor(ind2_cat, levels = sort(unique(data$ind2_cat))))
+
+```
+
+
+
+### Feature engineering - Financial variables
+
+Financial variables were corrected and transformed:
+
+* Asset side variables (intang_assets, curr_assets, fixed_assets) with negative values were floored at 0 as they cannot be negative. 
+* flag_asset_problem: Flag for assets with negative value was added to measure the quality of the financial variables.
+* total_assets_bs: Total assets were calculated from the asset side items.
+* Ratios were created from the asset side items by dividing them by the total asset (suffixed with 'bs_')
+* Ratios were created from the P&L items by dividing them by the sales value (suffixed with 'pl_')
+
+```{r}
+
+# Assets can't be negative. Floor them to 0 and add a flag
+data <-data  %>%
+  mutate(flag_asset_problem=ifelse(intang_assets<0 | curr_assets<0 | fixed_assets<0,1,0  ))
+
+data <- data %>%
+  mutate(intang_assets = ifelse(intang_assets < 0, 0, intang_assets),
+         curr_assets = ifelse(curr_assets < 0, 0, curr_assets),
+         fixed_assets = ifelse(fixed_assets < 0, 0, fixed_assets))
+
+# Generate total assets
+data <- data %>%
+  mutate(total_assets_bs = intang_assets + curr_assets + fixed_assets)
+
+# Create ratios of financial variables
+#   - Divide P&L items by sales
+#   - Divide asset items by total assets
+
+pl_names <- c("extra_exp","extra_inc",  "extra_profit_loss", "inc_bef_tax" ,"inventories",
+              "material_exp", "profit_loss_year", "personnel_exp")
+bs_names <- c("intang_assets", "curr_liab", "fixed_assets", "liq_assets", "curr_assets",
+              "share_eq", "subscribed_cap", "tang_assets" )
+
+# P&L items; add names_pl elements to new column name
+data <- data %>%
+  mutate_at(vars(pl_names), funs("pl"=./sales))
+
+# BS items; add names_bs elements to new column name
+data <- data %>%
+  mutate_at(vars(bs_names), funs("bs"=ifelse(total_assets_bs == 0, 0, ./total_assets_bs)))
+
+```
+
+
+### Feature engineering - Financial variables - Winsorize and create flags
+
+* Financial ratios calculated from financial items that cannot be negative were winsorized to have values between [0, 1]
+  * Flag values were added to track data issues:
+    * 'flag_high' suffix was added to capture ratios above 1
+    * 'flag_error' suffix was added to capture ratios with negative values
+* Financial ratios calculated from financial items that can be negative were winsorized to have values between [-1, 1] 
+  * Flag values were added to track data issues:
+    * 'flag_high' suffix was added to capture ratios above 1
+    * 'flag_low' suffix was added to capture ratios below -1
+    * 'flag_zero' suffix was added to capture ratios with 0 values
+  * Quadratics were added suffixed with 'quad'
+  
+```{r}
+
+# Variables that represent accounting items that cannot be negative (add 0 for negatives, add 1 for above 1)
+zero <-  c("extra_exp_pl", "extra_inc_pl", "inventories_pl", "material_exp_pl", "personnel_exp_pl",
+           "curr_liab_bs", "fixed_assets_bs", "liq_assets_bs", "curr_assets_bs", "subscribed_cap_bs",
+           "intang_assets_bs")
+
+data <- data %>%
+  mutate_at(vars(zero), funs("flag_high"= as.numeric(.> 1))) %>%
+  mutate_at(vars(zero), funs(ifelse(.> 1, 1, .))) %>%
+  mutate_at(vars(zero), funs("flag_error"= as.numeric(.< 0))) %>%
+  mutate_at(vars(zero), funs(ifelse(.< 0, 0, .)))
+
+# For vars that could be any, but are mostly between -1 and 1 (add -1 for below -1, add 1 for above 1)
+any <-  c("extra_profit_loss_pl", "inc_bef_tax_pl", "profit_loss_year_pl", "share_eq_bs")
+
+data <- data %>%
+  mutate_at(vars(any), funs("flag_low"= as.numeric(.< -1))) %>%
+  mutate_at(vars(any), funs(ifelse(.< -1, -1, .))) %>%
+  mutate_at(vars(any), funs("flag_high"= as.numeric(.> 1))) %>%
+  mutate_at(vars(any), funs(ifelse(.> 1, 1, .))) %>%
+  mutate_at(vars(any), funs("flag_zero"= as.numeric(.== 0))) %>%
+  mutate_at(vars(any), funs("quad"= .^2))
+
+# Drop flags with no variation
+variances <- data %>%
+  select(contains("flag")) %>%
+  apply(2, var, na.rm = TRUE) == 0
+
+data <- data %>%
+  select(-one_of(names(variances)[variances]))
+
+```
+
+### Feature engineering - HR variables (imputation was needed)
+
+HR variables were created and imputed:
+
+* ceo_age: Age of CEO was calculated, missings were replaced by the mean and was winsorized to have values between [25, 75]. 
+  * Flags were added to capture field qulity:
+    * flag_low_ceo_age: flag was added if the age was below 25 years
+    * flag_high_ceo_age: flag was added if the age was above 75 years
+    * flag_miss_ceo_age: flag was added if the age was imputed
+* ceo_young: Dummy was created to capture if the CEO is below 40 years old.
+* labor_avg_mod: number of employees were imputed with the mean.
+* foreign_management: firms where the foreign CEO rate was above 50% was flagged as foreign.
+
+```{r}
+
+# CEO age - Replace missings with mean, floor to 25, add ceilign to 75
+data <- data %>%
+  mutate(ceo_age = year-birth_year,
+         flag_low_ceo_age = as.numeric(ceo_age < 25 & !is.na(ceo_age)),
+         flag_high_ceo_age = as.numeric(ceo_age > 75 & !is.na(ceo_age)),
+         flag_miss_ceo_age = as.numeric(is.na(ceo_age)))
+
+data <- data %>%
+  mutate(ceo_age = ifelse(ceo_age < 25, 25, ceo_age) %>%
+           ifelse(. > 75, 75, .) %>%
+           ifelse(is.na(.), mean(., na.rm = TRUE), .),
+         ceo_young = as.numeric(ceo_age < 40))
+
+# Number of employees (very noisy measure) - Replace missings with mean
+data <- data %>%
+  mutate(labor_avg_mod = ifelse(is.na(labor_avg), mean(labor_avg, na.rm = TRUE), labor_avg),
+         flag_miss_labor_avg = as.numeric(is.na(labor_avg)))
+
+# Foreign management
+data <- data %>% mutate(foreign_management = as.numeric(foreign >= 0.5))
+
+```
+
+### Additional filters and drop unused fields
+
+* Unused factor levels were dropped
+* Firms with missing key variables were dropped from the dataset instead of imputing them.
+* Unused fields were removed from the dataset
+
+
+```{r}
+# Drop unused factor levels
+data <- data %>%
+  mutate_at(vars(colnames(data)[sapply(data, is.factor)]), funs(fct_drop))
+
+# Drop obs if key vars missing
+data <- data %>%
+  filter(!is.na(liq_assets_bs),!is.na(foreign), !is.na(ind), !is.na(age), !is.na(material_exp_pl), !is.na(m_region_loc))
+
+# Unused fields
+drops <- c("D",
+            "founded_year",
+            "exit_year",
+            "foreign",
+            "birth_year",
+            "inoffice_days",
+            "gender",
+            "origin",
+            "nace_main",
+            "ind",
+            "region_m",
+            "founded_date",
+            "exit_date",
+            "status_alive",
+            "ind2",
+            "begin",
+            "end",
+            "amort",
+           "labor_avg"
+           )
+
+data <- data %>% select(-drops)
+
+# Save dataset
+saveRDS(data, paste0(data_work, "/bisnode_firms_cleaned.rds"))
+
+
+
+
+```
+
